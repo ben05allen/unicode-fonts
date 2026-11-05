@@ -21,6 +21,8 @@ unchanged and `diff` shows exactly what was styled.
 
 ## Install
 
+Requires Python 3.12 or newer.
+
 ```console
 uv tool install unicode-fonts        # or: uv add unicode-fonts
 uv tool install 'unicode-fonts[clipboard]'   # adds --copy support
@@ -219,6 +221,9 @@ And one more worth knowing: **font names are matched loosely.** `bold-script`,
 
 ## Development
 
+The package supports Python 3.12 and newer; the development environment pins
+3.15 in `.python-version` and is the version the hooks run under.
+
 ```console
 uv sync                                    # dev tools: pytest, ruff, prek, ty, complexipy, deptry
 uv run pytest
@@ -268,3 +273,7 @@ reported, which is what you want for tools that are only ever invoked.
 
 `.pre-commit-config.yaml` is used rather than `prek.toml` so the same file also
 works for anyone running upstream `pre-commit`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
