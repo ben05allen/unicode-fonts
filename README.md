@@ -67,9 +67,33 @@ implementation of it:
   and `file_name.py` are safe.
 - **Code spans are verbatim.** `` `**x**` `` keeps its asterisks; backticks
   bind tighter than any other construct.
+- **Spans stop at a blank line.** `**start\n\nend**` stays literal — with a
+  warning — instead of bolding the next paragraph, so a forgotten closer is
+  visible rather than plausible-looking. A single line break is fine.
 - **Escaped output is not re-parseable.** `\*x\*` produces `*x*`, which a second
   pass would read as italic. That is inherent to escaping, exactly as in
   Markdown.
+
+## Whitespace
+
+Whitespace is load-bearing in plain-text documents, so it is handled
+conservatively:
+
+| Concern | Behaviour |
+| --- | --- |
+| Runs of spaces, tabs, indentation, trailing spaces | preserved exactly — an unmarked document is never reflowed |
+| Line endings | preserved verbatim: CRLF in, CRLF out, and `-o` output is byte-identical to the input wherever nothing was styled |
+| Spaces inside a span | never restyled — the `monospace` table's U+2002 and `fullwidth`'s U+3000 entries are dropped |
+| `~~strike~~` / `__under__` | interior spaces carry the combining mark so the line is continuous; leading and trailing spaces stay bare, and tabs or newlines are never marked |
+| Blank lines | end a paragraph, and no span may cross one |
+
+```console
+$ printf 'a **b**\r\nc\r\n' > post.md && unicode-fonts post.md -o out.md
+$ cmp post.md out.md   # differs only where 'b' was styled
+
+$ printf '~~see you~~\n' | unicode-fonts
+s̶e̶e̶ ̶y̶o̶u̶
+```
 
 ## Families
 
@@ -178,13 +202,20 @@ Recorded so they are not relitigated by accident:
 8. **Warnings, not result objects.** `render()` returns text, and
    `warnings.warn()` carries the caveats.
 
-Two smaller ones worth knowing:
+Three more that followed from asking how whitespace should behave:
 
-- **Whitespace is never restyled.** The `monospace` table maps space to U+2002
-  and `fullwidth` to U+3000 — both invisible and hostile to search, diffing and
-  word wrap — so those entries are dropped.
-- **Fonts are matched loosely.** `bold-script`, `BoldScript` and `bold script`
-  all resolve to `boldScript`.
+9. **Line endings are preserved verbatim.** Documents are read and written with
+   newline translation disabled, so a CRLF file stays CRLF and file input
+   matches stdin.
+10. **Spans are paragraph-bounded.** A closer must appear before the next blank
+    line, otherwise the opener stays literal and a single warning explains why.
+11. **Decoration covers interior spaces, not edges.** Marks go on spaces
+    between words so the rule is continuous, but never on leading or trailing
+    whitespace (where they would float) or on tabs and newlines (where they
+    would land at the start of the next line).
+
+And one more worth knowing: **font names are matched loosely.** `bold-script`,
+`BoldScript` and `bold script` all resolve to `boldScript`.
 
 ## Development
 

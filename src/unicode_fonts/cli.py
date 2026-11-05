@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import sys
 import warnings
-from pathlib import Path
 
 from .registry import FAMILIES, FONTS, sample
 from .render import UnicodeFontsWarning, render
@@ -105,9 +104,22 @@ def _list_fonts(stream) -> None:
 
 
 def _read(path: str) -> str:
+    """Read UTF-8 without newline translation so CRLF documents stay CRLF."""
     if path == "-":
+        # Bypass the text wrapper's universal-newline translation when the
+        # stream provides bytes; fall back so tests and embedders can substitute
+        # their own stdin.
+        buffer = getattr(sys.stdin, "buffer", None)
+        if buffer is not None:
+            return buffer.read().decode("utf-8")
         return sys.stdin.read()
-    return Path(path).read_text(encoding="utf-8")
+    with open(path, encoding="utf-8", newline="") as handle:
+        return handle.read()
+
+
+def _write(path: str, text: str) -> None:
+    with open(path, "w", encoding="utf-8", newline="") as handle:
+        handle.write(text)
 
 
 def _copy_to_clipboard(text: str) -> None:
@@ -160,7 +172,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.output:
         try:
-            Path(args.output).write_text(result, encoding="utf-8")
+            _write(args.output, result)
         except OSError as exc:
             print(f"{PROGRAM}: error: {exc}", file=sys.stderr)
             return 1

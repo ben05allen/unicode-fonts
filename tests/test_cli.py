@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from unicode_fonts.cli import main
+from unicode_fonts.registry import sample
 
 
 def test_stdin_to_stdout(
@@ -76,6 +77,40 @@ def test_list_fonts(capsys: pytest.CaptureFixture) -> None:
     assert "sansBoldItalic" in out
     assert "lossless" in out
     assert "circled" in out
+
+
+def test_crlf_is_preserved_when_reading_a_file(tmp_path) -> None:
+    source = tmp_path / "crlf.md"
+    source.write_bytes(b"a **b**\r\nc\r\n")
+    target = tmp_path / "out.md"
+    assert main([str(source), "-o", str(target)]) == 0
+    bold_b = sample("sansBold", "b")
+    assert target.read_bytes() == f"a {bold_b}\r\nc\r\n".encode()
+
+
+def test_unmarked_document_round_trips_byte_for_byte(tmp_path) -> None:
+    payload = b"plain\r\ntext\twith  spaces\r\n\r\n"
+    source = tmp_path / "plain.md"
+    source.write_bytes(payload)
+    target = tmp_path / "out.md"
+    assert main([str(source), "-o", str(target)]) == 0
+    assert target.read_bytes() == payload
+
+
+def test_crlf_on_stdin_is_preserved(
+    capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("sys.stdin", _Stdin("a\r\nb"))
+    assert main([]) == 0
+    assert capsys.readouterr().out == "a\r\nb"
+
+
+def test_file_and_stdin_agree_on_line_endings(tmp_path) -> None:
+    source = tmp_path / "crlf.md"
+    source.write_bytes(b"a\r\nb\r\n")
+    target = tmp_path / "out.md"
+    assert main([str(source), "-o", str(target)]) == 0
+    assert target.read_bytes() == source.read_bytes()
 
 
 def test_family_and_font_are_mutually_exclusive() -> None:

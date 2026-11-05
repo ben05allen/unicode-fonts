@@ -137,7 +137,33 @@ def test_underline_uses_combining_marks() -> None:
 
 
 def test_underline_and_strike_stack() -> None:
-    assert render("~~__x__~~") == "x\u0332\u0336"
+    # The outer span decorates last, so its mark lands closest to the glyph.
+    assert render("~~__x__~~") == "x\u0336\u0332"
+
+
+def test_marks_span_interior_spaces() -> None:
+    assert render("~~see you~~") == "s\u0336e\u0336e\u0336 \u0336y\u0336o\u0336u\u0336"
+
+
+def test_marks_stay_continuous_across_nested_spans() -> None:
+    # A nested italic span must not leave bare spaces on either side of it.
+    assert render("~~a *b* c~~") == (
+        "a\u0336 \u0336" + sample("sansItalic", "b") + "\u0336 \u0336c\u0336"
+    )
+
+
+def test_marks_are_trimmed_at_span_edges() -> None:
+    # A directive can introduce the whitespace that delimiters refuse to.
+    marked = sample("circled", "x") + "\u0336"
+    assert render("~~{{circled}} x {{/circled}}~~") == f" {marked} "
+
+
+def test_marks_never_touch_tabs() -> None:
+    assert render("~~a\tb~~") == "a\u0336\tb\u0336"
+
+
+def test_marks_never_touch_newlines() -> None:
+    assert render("~~a\nb~~") == "a\u0336\nb\u0336"
 
 
 def test_decorations_compose_with_fonts() -> None:
@@ -205,6 +231,27 @@ def test_non_ascii_is_never_touched() -> None:
 
 def test_already_styled_text_is_not_double_styled() -> None:
     assert render("**𝗯𝗼𝗹𝗱**") == "𝗯𝗼𝗹𝗱"
+
+
+def test_span_may_cross_a_single_newline() -> None:
+    bold = sample("sansBold", "ab")
+    assert render("**a\nb**") == f"{bold[0]}\n{bold[1]}"
+
+
+def test_span_may_not_cross_a_blank_line() -> None:
+    # A forgotten closer must stay visible instead of bolding the next
+    # paragraph as well.
+    source = "**a\n\nb**"
+    with pytest.warns(UnicodeFontsWarning, match="crosses a blank line"):
+        assert render(source) == source
+
+
+def test_directive_may_not_cross_a_blank_line() -> None:
+    source = "{{script}}a\n\nb{{/script}}"
+    with pytest.warns(UnicodeFontsWarning, match="crosses a blank line") as record:
+        assert render(source) == source
+    # Exactly one diagnostic, not an "unclosed" plus a "stray" pair.
+    assert len(record) == 1
 
 
 def test_newlines_and_blank_lines_survive() -> None:

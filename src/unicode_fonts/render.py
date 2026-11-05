@@ -112,11 +112,15 @@ def _walk(
     pieces: list[str] = []
     for node in nodes:
         if isinstance(node, Text):
-            pieces.append(_render_text(node, style, font, parent_font, context))
+            pieces.append(_render_text(node, font, parent_font, context))
             continue
         child = _merge(style, node)
         child_font = _font_for(child, context, node.offset)
-        pieces.append(_walk(node.children, child, child_font, font, context))
+        body = _walk(node.children, child, child_font, font, context)
+        # Decorations are applied to the finished span rather than per text
+        # run, so that a nested span in the middle of the text cannot break the
+        # continuity of the line.
+        pieces.append(_decorate(body, _marks_added(style, child)))
     return "".join(pieces)
 
 
@@ -170,7 +174,6 @@ def _describe(weight: Weight, slant: Slant) -> str:
 
 def _render_text(
     node: Text,
-    style: _Style,
     font: str,
     parent_font: str,
     context: _Context,
@@ -188,22 +191,46 @@ def _render_text(
             font = parent_font
 
     chars = CHAR_MAPS[font]
-    marks = _marks(style)
-    out: list[str] = []
-    for char in value:
-        out.append(chars.get(char, char))
-        if marks and not char.isspace() and not unicodedata.combining(char):
-            out.append(marks)
-    return "".join(out)
+    return "".join(chars.get(char, char) for char in value)
 
 
-def _marks(style: _Style) -> str:
+def _marks_added(outer: _Style, inner: _Style) -> str:
+    """Decorations this span introduces, in a fixed order."""
     marks = ""
-    if style.underline:
+    if inner.underline and not outer.underline:
         marks += UNDERLINE
-    if style.strike:
+    if inner.strike and not outer.strike:
         marks += STRIKE
     return marks
+
+
+def _decorate(text: str, marks: str) -> str:
+    """Attach ``marks`` to ``text``, from the first to the last visible character.
+
+    Interior spaces are marked so a strikethrough reads as one continuous line;
+    leading and trailing whitespace is left bare so no mark floats unanchored,
+    and tabs or newlines are never marked because a combining mark after one
+    lands at the start of the following line.
+    """
+    if not marks or not text:
+        return text
+
+    visible = [index for index, char in enumerate(text) if not char.isspace()]
+    if not visible:
+        return text
+    first, last = visible[0], visible[-1]
+
+    out: list[str] = []
+    for index, char in enumerate(text):
+        out.append(char)
+        if not first <= index <= last:
+            continue
+        if char.isspace() and char != " ":
+            continue
+        if unicodedata.combining(char):
+            continue
+        out.append(marks)
+    return "".join(out)
 
 
 __all__ = ["UnicodeFontsWarning", "render"]

@@ -18,6 +18,7 @@ partner and stays literal.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from .registry import coerce_font, squash
@@ -35,6 +36,9 @@ _EMPHASIS: dict[str, dict[str, str]] = {
 _ESCAPABLE: frozenset[str] = frozenset("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
 
 _DIRECTIVE = re.compile(r"\{\{\s*(/?)\s*([^{}\n]*?)\s*\}\}")
+
+#: A blank line ends a paragraph, and no span may cross one.
+_BLANK_LINE = re.compile(r"\n[ \t\r]*\n")
 
 #: Code spans are rendered with this font.
 CODE_FONT = "monospace"
@@ -72,6 +76,9 @@ class ParseIssue:
 class ParseResult:
     nodes: list[Node] = field(default_factory=list)
     issues: list[ParseIssue] = field(default_factory=list)
+    #: Names already reported as crossing a paragraph break, so their dangling
+    #: closing directive is not also reported as stray.
+    crossed: set[str] = field(default_factory=set)
 
 
 def parse(text: str) -> ParseResult:
@@ -134,9 +141,12 @@ def _parse_until(
             if match is not None:
                 closing, raw_name = match.group(1) == "/", match.group(2)
                 if closing:
-                    result.issues.append(
-                        ParseIssue(i, f"stray closing directive {raw_name!r}")
-                    )
+                    if squash(raw_name) in result.crossed:
+                        result.crossed.discard(squash(raw_name))
+                    else:
+                        result.issues.append(
+                            ParseIssue(i, f"stray closing directive {raw_name!r}")
+                        )
                     flush()
                     buf.append(match.group(0))
                     run_start = i
@@ -145,9 +155,26 @@ def _parse_until(
 
                 close = _find_directive_close(text, match.end(), end, raw_name)
                 if close is None:
-                    result.issues.append(
-                        ParseIssue(i, f"unclosed directive {{{{{raw_name}}}}}")
-                    )
+                    if _crosses_paragraph(
+                        text,
+                        match.end(),
+                        end,
+                        lambda start, name=raw_name: _find_directive_close(
+                            text, start, end, name, bound_paragraph=False
+                        ),
+                    ):
+                        result.issues.append(
+                            ParseIssue(
+                                i,
+                                f"directive {{{{{raw_name}}}}} crosses a blank line "
+                                f"and was left as text",
+                            )
+                        )
+                        result.crossed.add(squash(raw_name))
+                    else:
+                        result.issues.append(
+                            ParseIssue(i, f"unclosed directive {{{{{raw_name}}}}}")
+                        )
                 else:
                     after = text.index("}}", close) + 2
                     try:
@@ -175,6 +202,20 @@ def _parse_until(
         delim = _match_opener(text, i, end)
         if delim is not None:
             close = _find_closer(text, i + len(delim), end, delim)
+            if close is None and _crosses_paragraph(
+                text,
+                i + len(delim),
+                end,
+                lambda start, d=delim: _find_closer(
+                    text, start, end, d, bound_paragraph=False
+                ),
+            ):
+                result.issues.append(
+                    ParseIssue(
+                        i,
+                        f"{delim} span crosses a blank line and was left as text",
+                    )
+                )
             if close is not None:
                 flush()
                 children, _ = _parse_until(result, text, i + len(delim), close, delim)
@@ -225,8 +266,28 @@ def _matches(text: str, i: int, end: int, delim: str, *, closing: bool) -> bool:
     return bool(after) and not after.isspace()
 
 
-def _find_closer(text: str, start: int, end: int, delim: str) -> int | None:
+def _paragraph_limit(text: str, start: int, end: int) -> int:
+    """Offset of the first blank line at or after ``start``, else ``end``."""
+    match = _BLANK_LINE.search(text, start, end)
+    return match.start() if match is not None else end
+
+
+def _crosses_paragraph(
+    text: str, start: int, end: int, find: Callable[[int], int | None]
+) -> bool:
+    """True when ``find`` locates a closer beyond the current paragraph."""
+    limit = _paragraph_limit(text, start, end)
+    if limit >= end:
+        return False
+    return find(limit) is not None
+
+
+def _find_closer(
+    text: str, start: int, end: int, delim: str, *, bound_paragraph: bool = True
+) -> int | None:
     """Find the matching closer for ``delim``, skipping escapes and code spans."""
+    if bound_paragraph:
+        end = _paragraph_limit(text, start, end)
     i = start
     while i < end:
         ch = text[i]
@@ -243,8 +304,17 @@ def _find_closer(text: str, start: int, end: int, delim: str) -> int | None:
     return None
 
 
-def _find_directive_close(text: str, start: int, end: int, raw_name: str) -> int | None:
+def _find_directive_close(
+    text: str,
+    start: int,
+    end: int,
+    raw_name: str,
+    *,
+    bound_paragraph: bool = True,
+) -> int | None:
     """Return the offset of the ``{{/name}}`` matching the opener, if any."""
+    if bound_paragraph:
+        end = _paragraph_limit(text, start, end)
     wanted = squash(raw_name)
     depth = 1
     pos = start
