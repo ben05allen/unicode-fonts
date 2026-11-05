@@ -183,7 +183,8 @@ def coerce_family(raw: str | Family) -> Family:
         return raw
     family = _FAMILY_ALIASES.get(raw.strip().casefold())
     if family is None:
-        valid = ", ".join(sorted({alias for alias in _FAMILY_ALIASES}))
+        # List the canonical families, not the aliases, mirroring coerce_font.
+        valid = ", ".join(str(candidate) for candidate in FAMILIES)
         raise ValueError(f"unknown family {raw!r}; choose from: {valid}")
     return family
 

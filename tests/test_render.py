@@ -211,6 +211,20 @@ def test_lossy_font_is_refused_when_case_would_be_lost() -> None:
         assert render("{{squared}}Box{{/squared}}") == "Box"
 
 
+def test_lossy_font_falls_back_to_the_enclosing_lossless_font() -> None:
+    # The parent font is a better fallback than plain ASCII when it is safe.
+    with pytest.warns(UnicodeFontsWarning, match="cannot distinguish"):
+        assert render("{{circled}}{{squared}}Box{{/squared}}{{/circled}}") == "Ⓑⓞⓧ"
+
+
+def test_lossy_font_inside_a_lossy_font_is_still_refused() -> None:
+    # Falling back to the immediate parent would style the text with another
+    # case-destroying font while claiming to leave it unstyled.
+    source = "{{squared}}{{superscript}}Box{{/superscript}}{{/squared}}"
+    with pytest.warns(UnicodeFontsWarning, match="superscript"):
+        assert render(source) == "Box"
+
+
 def test_lossy_font_is_allowed_on_unambiguous_text() -> None:
     assert render("{{squared}}123{{/squared}}") == "123"
 

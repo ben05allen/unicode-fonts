@@ -149,7 +149,9 @@ def _next_node(result: ParseResult, text: str, i: int, end: int) -> tuple[Node, 
 def _parse_escape(text: str, i: int, end: int) -> tuple[Text, int] | None:
     if i + 1 >= end or text[i + 1] not in _ESCAPABLE:
         return None
-    return Text(text[i + 1], i), i + 2
+    # The node starts at the escaped character, not at the backslash that
+    # produced it, so its offset stays honest if a warning ever points at it.
+    return Text(text[i + 1], i + 1), i + 2
 
 
 def _parse_code_span(text: str, i: int, end: int) -> tuple[Span, int] | None:

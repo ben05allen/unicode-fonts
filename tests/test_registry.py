@@ -118,3 +118,17 @@ def test_coerce_rejects_unknown_names() -> None:
         coerce_family("comic")
     with pytest.raises(ValueError, match="unknown font"):
         coerce_font("comic")
+
+
+def test_unknown_name_errors_list_canonical_names_only() -> None:
+    # Aliases are accepted on input, but the suggestions stay canonical rather
+    # than echoing every spelling that happens to be understood.
+    with pytest.raises(ValueError) as family:
+        coerce_family("comic")
+    assert "double-struck" in str(family.value)
+    assert "doublestruck" not in str(family.value)
+
+    with pytest.raises(ValueError) as font:
+        coerce_font("comic")
+    assert "boldScript" in str(font.value)
+    assert "bold-script" not in str(font.value)

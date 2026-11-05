@@ -16,6 +16,7 @@ from .registry import (
     ambiguous_chars,
     coerce_family,
     coerce_font,
+    loses_information,
     resolve_axes,
 )
 
@@ -62,7 +63,7 @@ def render(
         context.warn(issue.message, issue.offset)
 
     current = _font_for(style, context, 0)
-    return _walk(result.nodes, style, current, current, context)
+    return _walk(result.nodes, style, (current,), context)
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,18 +106,17 @@ class _Context:
 def _walk(
     nodes: list[Node],
     style: _Style,
-    font: str,
-    parent_font: str,
+    fonts: tuple[str, ...],
     context: _Context,
 ) -> str:
     pieces: list[str] = []
     for node in nodes:
         if isinstance(node, Text):
-            pieces.append(_render_text(node, font, parent_font, context))
+            pieces.append(_render_text(node, fonts, context))
             continue
         child = _merge(style, node)
         child_font = _font_for(child, context, node.offset)
-        body = _walk(node.children, child, child_font, font, context)
+        body = _walk(node.children, child, (*fonts, child_font), context)
         # Decorations are applied to the finished span rather than per text
         # run, so that a nested span in the middle of the text cannot break the
         # continuity of the line.
@@ -174,24 +174,39 @@ def _describe(weight: Weight, slant: Slant) -> str:
 
 def _render_text(
     node: Text,
-    font: str,
-    parent_font: str,
+    fonts: tuple[str, ...],
     context: _Context,
 ) -> str:
     value = node.value
+    font = fonts[-1]
     if not context.allow_lossy:
         ambiguous = ambiguous_chars(font, value)
         if ambiguous:
             char, partner = ambiguous[0]
             context.warn(
                 f"{font!r} cannot distinguish {char!r} from {partner!r}; "
-                f"leaving text unstyled (use --allow-lossy to override)",
+                f"leaving text unstyled (override with allow_lossy=True "
+                f"or --allow-lossy)",
                 node.offset,
             )
-            font = parent_font
+            font = _lossless_ancestor(fonts, value)
 
     chars = CHAR_MAPS[font]
     return "".join(chars.get(char, char) for char in value)
+
+
+def _lossless_ancestor(fonts: tuple[str, ...], value: str) -> str:
+    """Nearest enclosing font that can still tell ``value``'s characters apart.
+
+    Falling back to the immediate parent is not enough: the parent may be a
+    case-destroying font too, which would style the text anyway while claiming
+    to leave it alone.  ``fonts`` is ordered outermost first, so walk it
+    backwards and stop at the first font that keeps ``value`` readable.
+    """
+    for candidate in reversed(fonts):
+        if not loses_information(candidate, value):
+            return candidate
+    return "normal"
 
 
 def _marks_added(outer: _Style, inner: _Style) -> str:

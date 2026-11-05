@@ -37,12 +37,23 @@ $ cat post.md | unicode-fonts                # stdin -> stdout
 $ unicode-fonts post.md --copy               # put it on the clipboard
 $ unicode-fonts post.md --family serif       # change the bold/italic family
 $ unicode-fonts post.md --font fullwidth     # style the whole document
-$ unicode-fonts --list-fonts                 # explore the palette
+$ unicode-fonts --list-fonts                 # explore the palette (no input)
 $ unicode-fonts post.md --allow-lossy        # permit case-destroying fonts
 ```
 
 `--family` and `--font` are mutually exclusive: `--family` changes what
 `**bold**` resolves to, `--font` imposes one font on everything.
+
+Input must be UTF-8. A mis-encoded file is rejected rather than decoded with
+replacement characters, so nothing is silently mangled on the way through:
+
+```console
+$ printf 'caf\xe9\n' | unicode-fonts
+unicode-fonts: error: standard input is not valid UTF-8 (byte 3: invalid continuation byte)
+```
+
+Exit codes: `0` success, `1` unreadable or non-UTF-8 input, `2` usage error
+(unknown family or font, or `--list-fonts` given an input path).
 
 ## Syntax
 
@@ -148,9 +159,15 @@ gated. Without `--allow-lossy` the affected text is left unstyled and a warning
 explains why; text that happens to contain no ambiguous characters (e.g.
 `{{squared}}123{{/squared}}`) renders normally.
 
+"Unstyled" means whatever the nearest *safe* enclosing font is, not necessarily
+ASCII: inside `{{circled}}{{squared}}Box{{/squared}}{{/circled}}` the text comes
+out as `Ⓑⓞⓧ` rather than plain `Box`. The fallback never settles on another
+case-destroying font — if every enclosing font is lossy too, it keeps walking
+outwards until it reaches plain ASCII.
+
 ```console
 $ printf '{{squared}}Box{{/squared}}' | unicode-fonts
-warning: line 1, col 12: 'squared' cannot distinguish 'B' from 'b'; leaving text unstyled (use --allow-lossy to override)
+warning: line 1, col 12: 'squared' cannot distinguish 'B' from 'b'; leaving text unstyled (override with allow_lossy=True or --allow-lossy)
 Box
 
 $ printf '{{squared}}Box{{/squared}}' | unicode-fonts --allow-lossy
@@ -169,7 +186,12 @@ from unicode_fonts import UnicodeFontsWarning, render
 render("**hello**")                       # '𝗵𝗲𝗹𝗹𝗼'
 render("**hello**", family="serif")       # '𝐡𝐞𝐥𝐥𝐨'
 render("hello", font="fullwidth")         # 'ｈｅｌｌｏ'
-render("**hello**", allow_lossy=False)
+
+# The lossless gate applies to the library too:
+box = "{{squared}}Box{{/squared}}"
+render(box)                               # warns, then 'Box'
+render(box, allow_lossy=True)             # '🄱🄾🅇'
+render("Box", font="squared")             # '🄱🄾🅇' (explicit opt-in)
 
 import warnings
 warnings.simplefilter("ignore", UnicodeFontsWarning)
@@ -216,6 +238,16 @@ Three more that followed from asking how whitespace should behave:
     whitespace (where they would float) or on tabs and newlines (where they
     would land at the start of the next line).
 
+Two more from asking what happens when things go wrong:
+
+12. **The lossless gate degrades outwards.** When a decorative font cannot keep
+    case, text falls back to the nearest enclosing font that can — not to the
+    immediate parent merely because it is the parent, which could be another
+    case-destroying font and would style the text while claiming not to.
+13. **Input is UTF-8 or it is an error.** No replacement characters, no
+    guessing at the encoding: a mis-encoded file stops with an explanation
+    instead of quietly losing characters.
+
 And one more worth knowing: **font names are matched loosely.** `bold-script`,
 `BoldScript` and `bold script` all resolve to `boldScript`.
 
@@ -259,7 +291,8 @@ SKIP=pytest git commit           # skip a hook for a single commit
 
 The complexity limit is enforced rather than aspirational: `_parse_until` sat at
 66 until it was split into a dispatcher plus one handler per construct, which
-brought it to 12.
+brought it to 12. `cli.main` was split the same way when the encoding and
+`--list-fonts` checks took it to 18.
 
 `ty`, `deptry` and `pytest` analyse the project rather than individual files,
 so they set `pass_filenames: false` and `always_run: true`: a commit that only
