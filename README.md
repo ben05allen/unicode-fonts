@@ -220,7 +220,39 @@ And one more worth knowing: **font names are matched loosely.** `bold-script`,
 ## Development
 
 ```console
-uv sync
+uv sync                                    # dev tools: pytest, ruff, prek, ty, complexipy
 uv run pytest
 uv run ruff check . && uv run ruff format --check .
+uv run ty check                            # type checker
+uv run complexipy --failed src tests       # cognitive complexity (limit: 15)
 ```
+
+### Git hooks
+
+Hooks live in `.pre-commit-config.yaml` and are driven by
+[prek](https://github.com/j178/prek), a Rust pre-commit replacement. Every hook
+is `language: system` and runs through `uv run`, so it uses the same locked
+environment as the commands above — `uv sync` is the only setup step.
+
+```console
+uv run prek install              # once per clone
+uv run prek run --all-files      # run every hook now
+uv run prek run ruff-check       # run one hook
+uv run prek list                 # show the configured hooks
+SKIP=pytest git commit           # skip a hook for a single commit
+```
+
+| hook | enforces |
+| --- | --- |
+| `ruff-check` | lint, with `--fix` |
+| `ruff-format` | formatting |
+| `ty` | type checking over the whole project (`pass_filenames: false`, since inference needs every module) |
+| `complexipy` | cognitive complexity ≤ 15 per function |
+| `pytest` | the test suite |
+
+The complexity limit is enforced rather than aspirational: `_parse_until` sat at
+66 until it was split into a dispatcher plus one handler per construct, which
+brought it to 12.
+
+`.pre-commit-config.yaml` is used rather than `prek.toml` so the same file also
+works for anyone running upstream `pre-commit`.

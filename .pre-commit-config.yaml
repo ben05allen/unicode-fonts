@@ -1,0 +1,50 @@
+# Hooks for prek (https://github.com/j178/prek), a drop-in pre-commit replacement.
+#
+# Every hook is `language: system` and runs through `uv run`, so it uses this
+# project's locked development environment instead of building an isolated one.
+# That keeps hook versions identical to `uv run pytest` and friends, and means
+# `uv sync` is the only setup step.
+#
+#   uv run prek install              # install the git hook
+#   uv run prek run --all-files      # run everything now
+#   uv run prek run ruff-check       # run one hook
+#   SKIP=pytest git commit           # skip a hook for one commit
+
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check --fix --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+
+      # Type checks need the whole project for cross-module inference, so this
+      # one ignores the staged file list and analyses everything.
+      - id: ty
+        name: ty check
+        entry: uv run ty check
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: complexipy
+        name: complexipy
+        entry: uv run complexipy --failed --max-complexity-allowed 15
+        language: system
+        types: [python]
+
+      - id: pytest
+        name: pytest
+        entry: uv run pytest -q
+        language: system
+        types: [python]
+        pass_filenames: false

@@ -22,8 +22,12 @@ clipboard = ["pyperclip>=1.9"]
 
 [dependency-groups]
 dev = [
+    "complexipy>=8.3.0",
+    "prek>=0.5.10",
+    "pyperclip>=1.11.0",
     "pytest>=8.3",
     "ruff>=0.9",
+    "ty>=0.0.97",
 ]
 
 [build-system]

@@ -95,148 +95,174 @@ def _parse_until(
     end: int,
     closer: str | None,
 ) -> tuple[list[Node], int]:
+    """Parse nodes from ``i`` up to ``closer``, or to ``end`` when there is none."""
     nodes: list[Node] = []
     buf: list[str] = []
     run_start = i
 
-    def flush() -> None:
-        if buf:
-            nodes.append(Text("".join(buf), run_start))
-            buf.clear()
-
     while i < end:
         if closer is not None and _matches(text, i, end, closer, closing=True):
-            flush()
-            return nodes, i
-
-        ch = text[i]
-
-        # Escapes.
-        if ch == "\\" and i + 1 < end and text[i + 1] in _ESCAPABLE:
+            break
+        start = i
+        node, i = _next_node(result, text, i, end)
+        if isinstance(node, Text):
+            # Escapes and unmatched delimiters are ordinary text; keeping them
+            # in the same run means one node per literal stretch.
             if not buf:
-                run_start = i
-            buf.append(text[i + 1])
-            i += 2
+                run_start = start
+            buf.append(node.value)
             continue
+        if buf:
+            nodes.append(Text("".join(buf), run_start))
+            buf = []
+        nodes.append(node)
 
-        # Code spans bind tighter than anything else and take their content
-        # verbatim, so a backtick can protect asterisks.
-        if ch == "`":
-            close = text.find("`", i + 1, end)
-            if close != -1:
-                flush()
-                content = text[i + 1 : close]
-                # CommonMark strips one flanking space pair, which lets
-                # `` `**x**` `` survive intact.
-                if len(content) >= 2 and content[0] == " " and content[-1] == " ":
-                    content = content[1:-1]
-                nodes.append(Span({"font": CODE_FONT}, [Text(content, i + 1)], i))
-                i = close + 1
-                run_start = i
-                continue
-
-        # {{font}} ... {{/font}}
-        if ch == "{" and text.startswith("{{", i):
-            match = _DIRECTIVE.match(text, i, end)
-            if match is not None:
-                closing, raw_name = match.group(1) == "/", match.group(2)
-                if closing:
-                    if squash(raw_name) in result.crossed:
-                        result.crossed.discard(squash(raw_name))
-                    else:
-                        result.issues.append(
-                            ParseIssue(i, f"stray closing directive {raw_name!r}")
-                        )
-                    flush()
-                    buf.append(match.group(0))
-                    run_start = i
-                    i = match.end()
-                    continue
-
-                close = _find_directive_close(text, match.end(), end, raw_name)
-                if close is None:
-                    if _crosses_paragraph(
-                        text,
-                        match.end(),
-                        end,
-                        lambda start, name=raw_name: _find_directive_close(
-                            text, start, end, name, bound_paragraph=False
-                        ),
-                    ):
-                        result.issues.append(
-                            ParseIssue(
-                                i,
-                                f"directive {{{{{raw_name}}}}} crosses a blank line "
-                                f"and was left as text",
-                            )
-                        )
-                        result.crossed.add(squash(raw_name))
-                    else:
-                        result.issues.append(
-                            ParseIssue(i, f"unclosed directive {{{{{raw_name}}}}}")
-                        )
-                else:
-                    after = text.index("}}", close) + 2
-                    try:
-                        font = coerce_font(raw_name)
-                    except ValueError as exc:
-                        result.issues.append(ParseIssue(i, str(exc)))
-                    else:
-                        flush()
-                        children, _ = _parse_until(
-                            result, text, match.end(), close, None
-                        )
-                        nodes.append(Span({"font": font}, children, i))
-                        i = after
-                        run_start = i
-                        continue
-                    # Unknown font: keep the whole construct verbatim so the
-                    # closing tag is not reported twice.
-                    flush()
-                    nodes.append(Text(text[i:after], i))
-                    i = after
-                    run_start = i
-                    continue
-
-        # Emphasis-style delimiters.
-        delim = _match_opener(text, i, end)
-        if delim is not None:
-            close = _find_closer(text, i + len(delim), end, delim)
-            if close is None and _crosses_paragraph(
-                text,
-                i + len(delim),
-                end,
-                lambda start, d=delim: _find_closer(
-                    text, start, end, d, bound_paragraph=False
-                ),
-            ):
-                result.issues.append(
-                    ParseIssue(
-                        i,
-                        f"{delim} span crosses a blank line and was left as text",
-                    )
-                )
-            if close is not None:
-                flush()
-                children, _ = _parse_until(result, text, i + len(delim), close, delim)
-                nodes.append(Span(dict(_EMPHASIS[delim]), children, i))
-                i = close + len(delim)
-                run_start = i
-                continue
-            # Unclosed: emit the delimiter verbatim and continue past it.
-            flush()
-            nodes.append(Text(delim, i))
-            i += len(delim)
-            run_start = i
-            continue
-
-        if not buf:
-            run_start = i
-        buf.append(ch)
-        i += 1
-
-    flush()
+    if buf:
+        nodes.append(Text("".join(buf), run_start))
     return nodes, i
+
+
+def _next_node(result: ParseResult, text: str, i: int, end: int) -> tuple[Node, int]:
+    """Parse one construct at ``i``, falling back to a single literal character.
+
+    Constructs are tried tightest-binding first, so a backtick protects
+    everything that follows it.
+    """
+    if text[i] == "\\":
+        escaped = _parse_escape(text, i, end)
+        if escaped is not None:
+            return escaped
+    if text[i] == "`":
+        code = _parse_code_span(text, i, end)
+        if code is not None:
+            return code
+    if text[i] == "{" and text.startswith("{{", i):
+        directive = _parse_directive(result, text, i, end)
+        if directive is not None:
+            return directive
+    emphasis = _parse_emphasis(result, text, i, end)
+    if emphasis is not None:
+        return emphasis
+    return Text(text[i], i), i + 1
+
+
+def _parse_escape(text: str, i: int, end: int) -> tuple[Text, int] | None:
+    if i + 1 >= end or text[i + 1] not in _ESCAPABLE:
+        return None
+    return Text(text[i + 1], i), i + 2
+
+
+def _parse_code_span(text: str, i: int, end: int) -> tuple[Span, int] | None:
+    close = text.find("`", i + 1, end)
+    if close == -1:
+        return None
+    content = text[i + 1 : close]
+    # CommonMark strips one flanking space pair, which lets `` `**x**` ``
+    # survive intact.
+    if len(content) >= 2 and content[0] == " " and content[-1] == " ":
+        content = content[1:-1]
+    return Span({"font": CODE_FONT}, [Text(content, i + 1)], i), close + 1
+
+
+def _parse_directive(
+    result: ParseResult, text: str, i: int, end: int
+) -> tuple[Node, int] | None:
+    match = _DIRECTIVE.match(text, i, end)
+    if match is None:
+        return None
+    if match.group(1) == "/":
+        return _closing_directive(result, match), match.end()
+    return _opening_directive(result, text, match, end)
+
+
+def _closing_directive(result: ParseResult, match: re.Match[str]) -> Text:
+    raw_name = match.group(2)
+    # A name already reported as crossing a paragraph is not reported again.
+    if squash(raw_name) in result.crossed:
+        result.crossed.discard(squash(raw_name))
+    else:
+        result.issues.append(
+            ParseIssue(match.start(), f"stray closing directive {raw_name!r}")
+        )
+    return Text(match.group(0), match.start())
+
+
+def _opening_directive(
+    result: ParseResult, text: str, match: re.Match[str], end: int
+) -> tuple[Node, int] | None:
+    raw_name = match.group(2)
+    start = match.end()
+    close = _find_directive_close(text, start, end, raw_name)
+    if close is None:
+        _report_directive_without_close(
+            result, text, start, end, raw_name, match.start()
+        )
+        return None
+    after = text.index("}}", close) + 2
+    try:
+        font = coerce_font(raw_name)
+    except ValueError as exc:
+        result.issues.append(ParseIssue(match.start(), str(exc)))
+        # Keep the whole construct verbatim so its closing tag is not also
+        # reported as stray.
+        return Text(text[match.start() : after], match.start()), after
+    children, _ = _parse_until(result, text, start, close, None)
+    return Span({"font": font}, children, match.start()), after
+
+
+def _report_directive_without_close(
+    result: ParseResult,
+    text: str,
+    start: int,
+    end: int,
+    raw_name: str,
+    opener: int,
+) -> None:
+    def find(from_index: int) -> int | None:
+        return _find_directive_close(
+            text, from_index, end, raw_name, bound_paragraph=False
+        )
+
+    if _crosses_paragraph(text, start, end, find):
+        result.issues.append(
+            ParseIssue(
+                opener,
+                f"directive {{{{{raw_name}}}}} crosses a blank line "
+                f"and was left as text",
+            )
+        )
+        result.crossed.add(squash(raw_name))
+    else:
+        result.issues.append(
+            ParseIssue(opener, f"unclosed directive {{{{{raw_name}}}}}")
+        )
+
+
+def _parse_emphasis(
+    result: ParseResult, text: str, i: int, end: int
+) -> tuple[Node, int] | None:
+    delim = _match_opener(text, i, end)
+    if delim is None:
+        return None
+    close = _find_closer(text, i + len(delim), end, delim)
+    if close is None:
+        _report_emphasis_without_close(result, text, i, end, delim)
+        # Unclosed: emit the delimiter verbatim and continue past it.
+        return Text(delim, i), i + len(delim)
+    children, _ = _parse_until(result, text, i + len(delim), close, delim)
+    return Span(dict(_EMPHASIS[delim]), children, i), close + len(delim)
+
+
+def _report_emphasis_without_close(
+    result: ParseResult, text: str, i: int, end: int, delim: str
+) -> None:
+    def find(from_index: int) -> int | None:
+        return _find_closer(text, from_index, end, delim, bound_paragraph=False)
+
+    if _crosses_paragraph(text, i + len(delim), end, find):
+        result.issues.append(
+            ParseIssue(i, f"{delim} span crosses a blank line and was left as text")
+        )
 
 
 def _match_opener(text: str, i: int, end: int) -> str | None:

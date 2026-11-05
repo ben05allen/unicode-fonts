@@ -44,7 +44,8 @@ def test_nesting_produces_nested_spans() -> None:
 
 
 def test_unclosed_marker_stays_literal() -> None:
-    assert parse("a **b").nodes == [Text("a ", 0), Text("**", 2), Text("b", 4)]
+    # Unmatched delimiters collapse into the surrounding literal run.
+    assert parse("a **b").nodes == [Text("a **b", 0)]
 
 
 def test_escapes_suppress_markup() -> None:
