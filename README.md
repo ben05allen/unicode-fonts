@@ -247,7 +247,7 @@ SKIP=pytest git commit           # skip a hook for a single commit
 | --- | --- |
 | `ruff-check` | lint, with `--fix` |
 | `ruff-format` | formatting |
-| `ty` | type checking over the whole project (`pass_filenames: false`, since inference needs every module) |
+| `ty` | type checking over the whole project |
 | `deptry` | declared dependencies vs. actual imports (missing, unused, transitive) |
 | `complexipy` | cognitive complexity ≤ 15 per function |
 | `pytest` | the test suite |
@@ -256,9 +256,13 @@ The complexity limit is enforced rather than aspirational: `_parse_until` sat at
 66 until it was split into a dispatcher plus one handler per construct, which
 brought it to 12.
 
-`deptry` runs on the whole project rather than on staged files, and with
-`always_run: true`, since the thing it guards — `pyproject.toml` — is not a
-Python file. It catches an import with no matching declaration (`DEP001`) and a
+`ty`, `deptry` and `pytest` analyse the project rather than individual files,
+so they set `pass_filenames: false` and `always_run: true`: a commit that only
+touches `pyproject.toml` or the lockfile still gets type-checked and tested.
+Trusting the staged file list would silently skip them exactly when a
+dependency changed. All three together cost well under a second.
+
+`deptry` catches an import with no matching declaration (`DEP001`) and a
 declaration nothing imports (`DEP002`); unused *dev* dependencies are not
 reported, which is what you want for tools that are only ever invoked.
 
