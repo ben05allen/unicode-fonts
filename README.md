@@ -220,11 +220,12 @@ And one more worth knowing: **font names are matched loosely.** `bold-script`,
 ## Development
 
 ```console
-uv sync                                    # dev tools: pytest, ruff, prek, ty, complexipy
+uv sync                                    # dev tools: pytest, ruff, prek, ty, complexipy, deptry
 uv run pytest
 uv run ruff check . && uv run ruff format --check .
 uv run ty check                            # type checker
 uv run complexipy --failed src tests       # cognitive complexity (limit: 15)
+uv run deptry .                            # declared deps vs. actual imports
 ```
 
 ### Git hooks
@@ -247,12 +248,19 @@ SKIP=pytest git commit           # skip a hook for a single commit
 | `ruff-check` | lint, with `--fix` |
 | `ruff-format` | formatting |
 | `ty` | type checking over the whole project (`pass_filenames: false`, since inference needs every module) |
+| `deptry` | declared dependencies vs. actual imports (missing, unused, transitive) |
 | `complexipy` | cognitive complexity ≤ 15 per function |
 | `pytest` | the test suite |
 
 The complexity limit is enforced rather than aspirational: `_parse_until` sat at
 66 until it was split into a dispatcher plus one handler per construct, which
 brought it to 12.
+
+`deptry` runs on the whole project rather than on staged files, and with
+`always_run: true`, since the thing it guards — `pyproject.toml` — is not a
+Python file. It catches an import with no matching declaration (`DEP001`) and a
+declaration nothing imports (`DEP002`); unused *dev* dependencies are not
+reported, which is what you want for tools that are only ever invoked.
 
 `.pre-commit-config.yaml` is used rather than `prek.toml` so the same file also
 works for anyone running upstream `pre-commit`.

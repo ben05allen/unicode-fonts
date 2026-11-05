@@ -36,6 +36,16 @@ repos:
         types: [python]
         pass_filenames: false
 
+      # Dependency hygiene: declared packages vs. actual imports. It compares
+      # pyproject.toml against the whole tree, so it takes no file list and
+      # runs even when only pyproject.toml was staged.
+      - id: deptry
+        name: deptry
+        entry: uv run deptry .
+        language: system
+        pass_filenames: false
+        always_run: true
+
       - id: complexipy
         name: complexipy
         entry: uv run complexipy --failed --max-complexity-allowed 15
